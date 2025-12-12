@@ -12,9 +12,6 @@ import os
 #OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
-BOT_TOKEN = "8486314934:AAHhtGcB8-lMZT-I1ONdM0zORS3BvCmjy9w"
-OPENAI_API_KEY = "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"  
-
 
 openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
