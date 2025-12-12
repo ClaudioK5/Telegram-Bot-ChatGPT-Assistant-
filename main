@@ -1,0 +1,203 @@
+import httpx
+import openai
+import re
+from html import escape
+from telegram import Update
+from telegram import ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters, CommandHandler
+from utils import remember, get_context, clear_memory
+import os
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+
+openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
+
+
+NEW_REQUEST_KEYBOARD = ReplyKeyboardMarkup(
+    [["Новый запрос"]],
+    resize_keyboard=True
+)
+
+
+def escape_only_code_blocks(message: str) -> str:
+
+    pattern = re.compile(r"<pre><code>(.*?)</code></pre>", re.DOTALL)
+
+
+    def escape_match(match):
+        code = match.group(1)
+        escaped_code = escape(code)
+        return f"<pre><code>{escaped_code}</code></pre>"
+
+
+    return pattern.sub(escape_match, message)
+
+
+
+def format_to_html(text: str) -> str:
+
+    text = re.sub(r'```(?:\w+)?\n(.*?)```', r'<pre><code>\1</code></pre>', text, flags=re.DOTALL)
+
+
+    text = re.sub(r'`(.*?)`', r'<code>\1</code>', text)
+
+
+    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+
+
+    text = re.sub(r'(?<!\*)\*(?!\*)(.*?)\*(?!\*)', r'<i>\1</i>', text)
+
+    return text
+
+async def ask_chatgpt(prompt, chat_id, memory_context=None):
+
+    OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+
+
+    safe_prompt = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', prompt)
+    safe_prompt = safe_prompt.strip()
+
+    messages = []
+
+    if memory_context:
+        messages.append({"role": "system", "content": memory_context})
+
+
+
+    messages.append({"role": "user", "content": safe_prompt})
+
+
+    if not safe_prompt:
+        return "I received an empty message. Please send some text."
+
+    print(f"Processing message: '{safe_prompt}'")
+
+    body = {
+        "model": "gpt-4o-mini",
+        "messages": messages,
+        "max_tokens": 2000,
+        "temperature": 0.7
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=100.0) as client:
+            response = await client.post(
+                OPENAI_API_URL,
+                json=body,
+                headers=headers
+            )
+
+            response.raise_for_status()
+            data = response.json()
+
+
+            if (data.get('choices') and
+                    len(data['choices']) > 0 and
+                    data['choices'][0].get('message') and
+                    data['choices'][0]['message'].get('content')):
+
+                text_response = data['choices'][0]['message']['content'].strip()
+                text_response = format_to_html(text_response)
+                text_response = escape_only_code_blocks(text_response)
+                print(text_response)
+                text_response = text_response if text_response else "I received an empty response from the AI."
+
+                return text_response
+
+
+            else:
+                return "Unexpected response format from AI service."
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP error {e.response.status_code}: {e.response.text}"
+        print(f"HTTP Error: {error_msg}")
+        return f"API error: {e.response.status_code}"
+
+    except Exception as e:
+        error_msg = f"ChatGPT API error: {str(e)}"
+        print(error_msg)
+        return "Temporary issue with the AI service. Please try again."
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user_message = update.message.text or update.message.caption
+    chat_id = update.message.chat_id
+
+
+
+    if not user_message or not user_message.strip():
+        await update.message.reply_text("Please send a text message for me to process.")
+        return
+
+    else:
+        user_message = user_message.strip()
+
+
+    if user_message == "Новый запрос":
+
+        clear_memory(chat_id)
+
+        await update.message.reply_text(
+        "Context cleared. Send a new message.",
+        reply_markup=NEW_REQUEST_KEYBOARD
+    )
+        return
+
+
+
+    memory_context = get_context(chat_id)
+    print(f"Memory context for {chat_id}: {memory_context}")
+
+
+    try:
+
+        ai_response = await ask_chatgpt(user_message, chat_id, memory_context)
+
+        await update.message.reply_text(ai_response, parse_mode="HTML")
+
+        print(ai_response)
+        remember(chat_id, user_message, ai_response)
+
+    except Exception as e:
+        print(f"Handler error: {e}")
+
+
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    clear_memory(chat_id)
+
+    await update.message.reply_text(
+    "🤖 Welcome!\n\n"
+    "Context cleared. You can start a new conversation.",
+    reply_markup=NEW_REQUEST_KEYBOARD
+    )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "ℹ️ Help\n\n"
+        "• Send any text — I will answer using ChatGPT.\n"
+        "• Press “Новый запрос” — to clear context.\n"
+        "• /start — clears context and restarts.\n",
+        reply_markup=NEW_REQUEST_KEYBOARD
+    )
+
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+
+app.add_handler(CommandHandler("start", start_command))
+app.add_handler(CommandHandler("help", help_command))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+print("Bot is running with simple voice mode...")
+app.run_polling()
