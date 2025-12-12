@@ -1,0 +1,34 @@
+chat_memory = {}
+
+
+def remember(chat_id, user_msg, ai_msg, max_history=4):
+
+    if chat_id not in chat_memory:
+        chat_memory[chat_id] = []
+
+
+    chat_memory[chat_id].append({"user": user_msg[:100], "ai": ai_msg[:80]})
+
+
+    if len(chat_memory[chat_id]) > max_history:
+        chat_memory[chat_id] = chat_memory[chat_id][-max_history:]
+
+
+def get_context(chat_id):
+
+    history = chat_memory.get(chat_id, [])
+    if not history:
+        return ""
+
+    context_parts = []
+    for exchange in history:
+        context_parts.append(f"User: {exchange['user']}")
+        context_parts.append(f"AI: {exchange['ai']}")
+
+    return "Previous: " + " | ".join(context_parts)
+
+
+def clear_memory(chat_id):
+
+    if chat_id in chat_memory:
+        del chat_memory[chat_id]
