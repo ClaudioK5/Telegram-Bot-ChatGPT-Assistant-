@@ -8,8 +8,8 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 from utils import remember, get_context, clear_memory
 import os
 
-#BOT_TOKEN = os.getenv("BOT_TOKEN")
-#OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
 
